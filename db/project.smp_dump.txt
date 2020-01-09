@@ -1,0 +1,12 @@
+
+State Machine - |project|datapath:D0|ymove
+Name ymove.00 ymove.10 ymove.01 
+ymove.00 0 0 0 
+ymove.01 1 0 1 
+ymove.10 1 1 0 
+
+State Machine - |project|datapath:D0|xmove
+Name xmove.00 xmove.10 xmove.01 
+xmove.00 0 0 0 
+xmove.01 1 0 1 
+xmove.10 1 1 0 

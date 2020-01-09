@@ -1,0 +1,582 @@
+module project
+	(
+		CLOCK_50,						//	On Board 50 MHz
+		KEY,
+		LEDR,
+		HEX0,
+		// The ports below are for the VGA output.  Do not change.
+		VGA_CLK,   						//	VGA Clock
+		VGA_HS,							//	VGA H_SYNC
+		VGA_VS,							//	VGA V_SYNC
+		VGA_BLANK_N,						//	VGA BLANK
+		VGA_SYNC_N,						//	VGA SYNC
+		VGA_R,   						//	VGA Red[9:0]
+		VGA_G,	 						//	VGA Green[9:0]
+		VGA_B   						//	VGA Blue[9:0]
+	);
+
+	
+	input			CLOCK_50;				//	50 MHz
+	input			[2:0] KEY;
+	// Do not change the following outputs
+	output			VGA_CLK;   				//	VGA Clock
+	output			VGA_HS;					//	VGA H_SYNC
+	output			VGA_VS;					//	VGA V_SYNC
+	output			VGA_BLANK_N;				//	VGA BLANK
+	output			VGA_SYNC_N;				//	VGA SYNC
+	output	[7:0]	VGA_R;   				//	VGA Red[9:0]
+	output	[7:0]	VGA_G;	 				//	VGA Green[9:0]
+	output	[7:0]	VGA_B;   				//	VGA Blue[9:0]
+	output  [4:0] LEDR;
+	output [6:0] HEX0;
+	
+	wire resetn;
+	assign resetn = KEY[0];
+	
+	wire hitkey;
+	assign hitkey = ~KEY[1]; 
+	
+	// Create the colour, x, y and writeEn wires that are inputs to the controller.
+
+	wire [11:0] colour;
+	wire [8:0] x;
+	wire [7:0] y;
+	wire writeEn;
+	
+
+	// Create an Instance of a VGA controller - there can be only one!
+	// Define the number of colours as well as the initial background
+	// image file (.MIF) for the controller.
+	vga_adapter VGA(
+			.resetn(resetn),
+			.clock(CLOCK_50),
+			.colour(colour),
+			.x(x),
+			.y(y),
+			.plot(writeEn),
+			/* Signals for the DAC to drive the monitor. */
+			.VGA_R(VGA_R),
+			.VGA_G(VGA_G),
+			.VGA_B(VGA_B),
+			.VGA_HS(VGA_HS),
+			.VGA_VS(VGA_VS),
+			.VGA_BLANK(VGA_BLANK_N),
+			.VGA_SYNC(VGA_SYNC_N),
+			.VGA_CLK(VGA_CLK));
+		defparam VGA.RESOLUTION = "320x240";
+		defparam VGA.MONOCHROME = "FALSE";
+		defparam VGA.BITS_PER_COLOUR_CHANNEL = 3;
+		defparam VGA.BACKGROUND_IMAGE = "startpgggg.mif";
+	 	
+		wire countsig, drawing, ld_values, target, donestartpg, drawstartpg, enablemove, waiting, resetcounter, start, erasing, erasesig, checksig, drawingtarg, buttonsig, detectpress, resetpress, speed, resetspeed, normalspeed;
+		
+	 control C0(
+	 //inputs
+        .clk(CLOCK_50),
+        .resetn(resetn),
+		  .drawing(drawing),
+		  .erasing(erasing),
+		  .donestartpg(donestartpg),
+		  .drawingtarg(drawingtarg),
+		  .detectpress(detectpress),
+		  .speed(speed),
+		  .normalspeed(normalspeed),
+		  .startButton(~KEY[2]),
+		 
+		 
+    //outputs    
+		  .current_state(LEDR[4:0]),
+		  .enablemove(enablemove),
+		  .enablewrite(writeEn),
+		  .countsig(countsig),
+		  .ld_values(ld_values),
+		  .resetcounter(resetcounter),
+		  .erasesig(erasesig),
+		  .start(start),
+		  .checksig(checksig),
+		  .waiting(waiting),
+		  .target(target),
+		  .buttonsig(buttonsig),
+		  .drawstartpg(drawstartpg),
+		  .resetpress(resetpress),
+		  .resetspeed(resetspeed)
+		  
+    );
+
+	 
+    datapath D0(
+	 //inputs
+        .clk(CLOCK_50),
+        .resetn(resetn),
+		  .countsig(countsig),
+		  .ld_values(ld_values),
+		  .waiting(waiting),
+		  .enablemove(enablemove),
+		  .startkey(~KEY[2]),
+		  .donestartpg(donestartpg),
+		  .enablewrite(writeEn),
+		  .resetcounter(resetcounter),
+		  .erasesig(erasesig),
+		  .drawstartpg(drawstartpg),
+		  .start(start),
+		  .checksig(checksig),
+		  .target(target),
+		  .hitkey(hitkey),
+		  .buttonsig(buttonsig),
+		  .resetpress(resetpress),
+		  .resetspeed(resetspeed),
+	//outputs
+        .color(colour),
+        .x_out(x),
+        .y_out(y),
+		  .drawing(drawing),
+		  .erasing(erasing),
+		  .drawingtarg(drawingtarg),
+		  .detectpress(detectpress),
+		  .HEX0(HEX0),
+		  .speed(speed),
+		  .normalspeed(normalspeed)
+		  //.HEX1(HEX1)
+    );         	 
+endmodule
+
+module control(
+    input clk,
+    input resetn,
+	 input drawing,
+	 input erasing,
+	 input drawingtarg,
+	 input detectpress,
+	 input donestartpg,
+	 input startButton,
+	 input speed,
+	 input normalspeed,
+	 output reg [4:0] current_state,
+	 output reg ld_values,
+	 output reg enablemove,
+	 output reg enablewrite,
+	 output reg countsig,
+	 output reg resetcounter,
+	 output reg start,
+	 output reg erasesig,
+	 output reg checksig,
+	 output reg drawstartpg,
+	 output reg target,
+	 output reg buttonsig,
+	 output reg resetpress,
+	 output reg waiting,
+	 output reg resetspeed
+    );
+	 
+    reg [4:0] next_state; 
+	 
+	 wire move;
+	 fifteenframes u0(clk, resetn, move, speed, normalspeed);
+	 
+    localparam 
+					
+					startwait			= 5'd0,
+					startpg				= 5'd1,
+					startpgwait			= 5'd2,
+					startcode 			= 5'd3,
+					loadxy 				= 5'd4,
+					drawtarget			= 5'd5,
+					drawtargetwait		= 5'd6,
+					checkstate			= 5'd7,
+					S_CYCLE_0			= 5'd8,
+					smallsquare			= 5'd9,
+					waitstate2			= 5'd10,	
+					WAITFORMOVE			= 5'd11,
+					erase					= 5'd12,
+					eraseWait			= 5'd13,
+					ontarget2			= 5'd14,
+					ontarget				= 5'd15,
+					speedreset			= 5'd16;
+
+    // Next state logic aka our state table
+    always@(*)
+    begin: state_table 
+            case (current_state)
+						ontarget: next_state = ontarget2;
+						ontarget2: next_state = speedreset;
+						speedreset: next_state = S_CYCLE_0;
+						
+						startwait: next_state = startButton ? startpg: startwait;
+						startpg: next_state =  startpgwait;
+						startpgwait: next_state = donestartpg? startcode: startpg;
+						startcode: next_state = loadxy;
+						loadxy: next_state = drawtarget;
+						drawtarget: next_state = drawtargetwait;
+						drawtargetwait: next_state = drawingtarg? drawtarget: checkstate;
+						checkstate: next_state = S_CYCLE_0;
+						S_CYCLE_0: next_state = smallsquare;
+						smallsquare: next_state= waitstate2;
+						waitstate2: next_state= drawing? smallsquare: WAITFORMOVE;
+						WAITFORMOVE: next_state = move? erase: WAITFORMOVE;
+						erase: next_state = eraseWait;
+						eraseWait: next_state = erasing? erase: loadxy;
+           // default:     next_state = startwait;
+        endcase
+    end // state_table
+   
+
+    // Output logic aka all of our datapath control signals
+    always @(posedge clk)
+    begin: enable_signals
+        // By default make all our signals 0	
+		  countsig=1'b0;
+		  enablewrite=1'b0;
+		  ld_values=1'b0;
+		  enablemove=1'b0;
+		  resetcounter=1'b0;
+		  start=1'b0;
+		  erasesig=1'b0;
+		  checksig=1'b0;
+		  target=1'b0;
+		  buttonsig=1'b0;
+		  resetpress=1'b0;
+		  resetspeed=1'b0;
+		  waiting = 1'b0;
+		  drawstartpg = 1'b0;
+		  
+        case (current_state)
+				startwait: waiting = 1'b1;
+				ontarget: begin resetpress=1'b1; end
+				ontarget2: begin buttonsig=1'b1; end
+				speedreset: begin resetspeed=1'b1; end
+				
+				startwait: waiting=1'b1;
+				startpg: begin drawstartpg = 1'b1; enablewrite =1'b1; end
+				startpgwait: begin enablewrite =1'b1; end
+				startcode: begin start=1'b1; end
+				drawtarget: begin target=1'b1; enablewrite=1'b1; end
+				loadxy: begin ld_values = 1'b1; resetcounter=1'b1; end
+				checkstate: begin checksig=1'b1; end
+				S_CYCLE_0: begin enablemove = 1'b1; end
+				smallsquare: begin countsig = 1'b1; enablewrite = 1'b1; end
+				WAITFORMOVE: begin resetcounter=1'b1; end
+				erase: begin erasesig = 1'b1; enablewrite = 1'b1; end
+        endcase
+    end // enable_signals
+	
+	
+    // current_state registers
+    always@(posedge clk)
+    begin: state_FFs
+        if(!resetn)
+            current_state <= startwait;
+		  else if (detectpress)
+				current_state <= ontarget;
+				
+		  else
+            current_state <= next_state;
+    end // state_FFS
+endmodule
+
+module datapath(
+    input clk,
+    input resetn,
+	 input enablemove,
+	 input ld_values,
+	 input countsig,
+	 input enablewrite,
+	 input resetcounter,
+	 input drawstartpg,
+	 input start,
+	 input erasesig,
+	 input checksig,
+	 inout waiting,
+	 input startkey,
+	 input target,
+	 input hitkey,
+	 input buttonsig,
+	 input resetpress,
+	 input resetspeed,
+	 output reg erasing,
+	 output reg [11:0] color,
+	 output reg [8:0] x_out,
+	 output reg [7:0] y_out,
+	 output reg drawing,
+	 output reg drawingtarg,
+	 output reg detectpress,
+	 output reg speed,
+	 output reg donestartpg,
+	 output reg normalspeed,
+	 output [6:0] HEX0
+    );
+	 
+	 reg [8:0] counter;
+	 reg [8:0] counter2;
+	 reg [8:0] counter3;
+	 reg [16:0] counter7;
+	 reg [8:0] x;
+	 reg [7:0] y;
+    wire [11:0] rclr;
+	 reg [11:0] clr;
+	 reg [1:0]xmove, ymove;
+	 wire enable;
+	 
+	 reg [8:0] xcoord;
+	 reg [7:0] ycoord;
+	 reg write;
+	 reg [8:0] xnew;
+	 reg [7:0] ynew;
+	 reg [3:0] score;
+	 
+	 
+	 ram1 k2(counter7, clk, , write, rclr);
+	 
+	 hexdisplay h0(score[0], score[1], score[2], score[3], HEX0);
+	 
+    // Registers a, b, c, x with respective input logic
+    always@(posedge clk) begin
+	 
+	 if(waiting) begin
+		counter7 <= 17'd0;
+		write <= 0;
+		x_out <= 9'd0;
+		y_out <= 8'd0;
+		donestartpg <= 1'b0;
+	 end
+	 
+	 else begin
+	 
+		 if(!resetn) begin
+				x <= 9'd0; 
+				y <= 8'd0;
+				color <= 3'b111;
+				counter <= 9'd0;
+				drawing <= 1'b0;	
+				erasing <= 1'b0; 
+				drawing <=1'b0;
+				drawingtarg<=1'b0;
+				detectpress<=1'b0;
+				speed<=1'b0;
+				normalspeed<=1'b1;
+				counter<=9'b0;
+				counter2<=9'b0;
+				counter3<=9'b0;
+				counter7<=17'b0;
+				clr<=3'b111;
+				xmove <=2'd1;
+				ymove <=2'd2;
+				xcoord<= 8'd0; 
+				ycoord<=8'd0;
+				xnew<=9'd0;
+				ynew<=8'd0;
+				score<=4'd0;
+				donestartpg=1'b0;
+		  end
+		  
+
+		 else if(drawstartpg) begin
+			if(!write) begin
+				if(counter7 == 17'd76800) begin counter7 <= 0; write <= 1;  donestartpg <= 1'b1;  end
+				else begin counter7 <= counter7 + 1'b1; color <= rclr; end 
+				if(x_out==9'd319) begin x_out <= 9'd0; y_out <= y_out +1'b1; end	
+				else if(y_out == 8'd240) begin x_out <= 9'd0; y_out <= 8'd0; end
+				else begin x_out <= x_out + 1'b1; end
+			end	
+		end
+	 
+		else if(donestartpg)begin
+				if (checksig) begin
+					if(xcoord == 9'd0  & ycoord == 8'd0) begin
+						xmove <= 2'd1;
+						ymove <= 2'd2; // y is same
+						 // x is moving right	
+					end
+					if(xcoord == 9'd105 & ycoord == 8'd0) begin
+						xmove <= 2'd2;
+						ymove <= 2'd1; // y is moving down
+						end
+					if(xcoord == 9'd105 & ycoord == 8'd86)begin
+						xmove <= 2'd0; //x is going left
+						ymove <= 2'd2; //same
+						end
+						else detectpress <= 1'b0;
+					if(xcoord == 9'd0 & ycoord == 8'd86)begin
+						xmove <= 2'd2;
+						ymove <= 2'd0; // negative dir
+					end
+					if(xcoord == 9'd53 & ycoord == 8'd86) detectpress <=1'b1;
+				end
+		  
+				if(resetpress) begin detectpress <=1'b0; end
+				if (resetspeed) begin speed <= 1'b0; normalspeed <=1'b0; end
+	  
+				if(start)begin
+					x <= 9'd0; 
+					y <= 8'd0;
+					x_out <= 9'd0;
+					y_out <= 9'd0;
+					score <= 2'b00;
+					counter <= 9'd0;
+					counter2 <= 9'd0;
+					counter3 <= 9'd0;
+				end
+		  
+				if (resetcounter)begin
+					counter2 <= 9'b0;
+					counter <= 9'b0;
+					counter3 <= 9'b0;
+				end
+				
+				if (erasesig) begin
+					if(counter2 < 9'b100000000) begin
+						counter2 <= counter2+1;
+						xnew <= {9'd37}+ xcoord + {5'b00000, counter2[3:0]};
+						ynew <= {8'd67} + ycoord +  {4'b0000, counter2[7:4]};
+						erasing <= 1'b1;
+						clr <= 12'b111111111111;
+					end
+					else erasing <=1'b0;
+				end
+				
+				if(enablewrite)begin
+					x_out <= xnew;
+					y_out <= ynew;
+					color <= clr;
+				end
+				
+				if (ld_values) begin
+						xcoord <=x;
+						ycoord <=y;
+				end
+					
+			   if(enablemove) begin
+					if(ymove==2'd2 & xmove==2'd1)begin
+						x <= xcoord+1;
+						y <= ycoord;
+						end
+					if(ymove==2'd1 & xmove==2'd2)begin
+						x <= xcoord;
+						y <= ycoord+1;
+					end
+					if(ymove==2'd2 & xmove==2'd0)begin
+						x <= xcoord-1;
+						y <= ycoord;
+					end
+					
+					if(ymove==2'd0 & xmove==2'd2)begin
+						x <= xcoord;
+						y <= ycoord-1;
+					end
+			   end
+					
+				if (countsig) begin
+					if(counter < 9'b100000000) begin
+						counter <= counter+1;
+						xnew <= {9'd37}+ xcoord + {5'b00000, counter[3:0]};
+						ynew <= {8'd67} + ycoord +  {4'b0000, counter[7:4]};
+						drawing <= 1'b1;
+						clr <= 12'b010111100001;
+					end
+					else drawing <=1'b0;
+				end	
+			
+			
+			   if (target) begin
+					if(counter3 < 9'b100000000) begin
+						counter3 <= counter3+1;
+						xnew <= {9'd90}+ {5'b00000, counter3[3:0]};
+						ynew <= {8'd153} +  {4'b0000, counter3[7:4]};
+						drawingtarg <= 1'b1;
+						clr <= 12'b011011001110;
+					end
+					else drawingtarg <=1'b0;
+				end
+				
+			 if(buttonsig) begin
+					if (hitkey==1'b1) begin
+						score<=score+1;
+						speed<=1'b1;
+					end
+					else begin
+						score<=4'd0;
+						normalspeed<=1'b1;
+					end
+			  end
+			  
+			end
+		end
+	end
+endmodule
+
+
+module fifteenframes(counter50, clear_b, Enable, speed, normalspeed);
+	input counter50, clear_b, speed, normalspeed;
+	
+	wire w;
+	reg [4:0] Q;
+	output reg Enable;
+	
+	reg [4:0] increasespeed = 5'b01010; //13
+	
+	oneframecounter f0(counter50, clear_b, w);
+	
+	
+	always @(posedge counter50) 
+	begin
+		if (speed)
+			if(increasespeed == 5'b00001)
+				increasespeed <=increasespeed;
+			else
+				increasespeed <= increasespeed-1;
+		else if (normalspeed)
+			increasespeed <= 5'b10000;
+		else
+			increasespeed <= increasespeed;
+			
+			
+		if(Q == increasespeed)
+			Enable <= 1;
+		else
+			Enable <= 0;
+	end
+	
+	always @ (posedge counter50, posedge Enable) begin
+		if(Enable) 
+			Q <= 4'b0;
+		else if (w)
+			Q <= Q+1;
+	end	
+endmodule
+
+
+module oneframecounter(counter50, clear_b, Enable);
+	input counter50, clear_b;
+	wire [19:0] w;
+	reg [19:0] Q;
+	output reg Enable;
+	
+	assign w = 20'b01010001011000010101; // 20'b11001011011100110110; //833334 = 1/60 seconds
+	
+	always @(posedge counter50) 
+	begin
+		if(Q == w)
+			Enable <= 1;
+		else
+			Enable <= 0;
+	end
+	always @ (posedge counter50, posedge Enable) 
+	begin
+		if (Enable)
+			Q <= 0;
+		else
+			Q <= Q+1;
+	end
+endmodule
+
+
+module hexdisplay(c0, c1, c2, c3, result); 
+	input c0,c1,c2,c3; 
+	output [6:0] result; 
+	assign result[0] = ~( (~c0 & ~c1 & ~c2 & ~c3) | (~c0 & c1 & ~c2 & ~c3) | (c0 & c1 & ~c2 & ~c3) | (c0 & ~c1 & c2 & ~c3) | (~c0 & c1 & c2 & ~c3) | (c0 & c1 & c2 & ~c3) | (~c0 & ~c1 & ~c2 & c3) | (c0 & ~c1 & ~c2 & c3) | (~c0 & c1 & ~c2 & c3) | (~c0 & ~c1 & c2 & c3) | (~c0 & c1 & c2 & c3) | (c0 & c1 & c2 & c3));
+	assign result[1] = ~((~c0 & ~c1 & ~c2 & ~c3) | (c0 & ~c1 & ~c2 & ~c3) | (~c0 & c1 & ~c2 & ~c3) | (c0 & c1 & ~c2 & ~c3) | (~c0 & ~c1 & c2 & ~c3) | (c0 & c1 & c2 & ~c3) | (~c0 & ~c1 & ~c2 & c3)  |  (c0 & ~c1 & ~c2 & c3) | (~c0 & c1 & ~c2 & c3) | (c0 & ~c1 & c2 & c3));
+	assign result[2] = ~((~c0 & ~c1 & ~c2 & ~c3) | (c0 & ~c1 & ~c2 & ~c3) | (c0 & c1 & ~c2 & ~c3) | (~c0 & ~c1 & c2 & ~c3) | (c0 & ~c1 & c2 & ~c3) | (~c0 & c1 & c2 & ~c3) | (c0 & c1 & c2 & ~c3) | (~c0 & ~c1 & ~c2 & c3)  |  (c0 & ~c1 & ~c2 & c3) | (~c0 & c1 & ~c2 & c3) | (c0 & c1 & ~c2 & c3) | (c0 & ~c1 & c2 & c3));
+	assign result[3] = ~((~c0 & ~c1 & ~c2 & ~c3) | (~c0 & c1 & ~c2 & ~c3) | (c0 & c1 & ~c2 & ~c3) | (c0 & ~c1 & c2 & ~c3) | (~c0 & c1 & c2 & ~c3) | (~c0 & ~c1 & ~c2 & c3) | (c0 & c1 & ~c2 & c3) | (~c0 & ~c1 & c2 & c3) | (c0 & ~c1 & c2 & c3) | (~c0 & c1 & c2 & c3));
+	assign result[4] = ~((~c0 & ~c1 & ~c2 & ~c3) | (~c0 & c1 & ~c2 & ~c3) | (~c0 & c1 & c2 & ~c3) | (~c0 & ~c1 & ~c2 & c3) | (~c0 & c1 & ~c2 & c3) | (c0 & c1 & ~c2 & c3) | (~c0 & ~c1 & c2 & c3) | (c0 & ~c1 & c2 & c3) | (~c0 & c1 & c2 & c3) | (c0 & c1 & c2 & c3));
+	assign result[5] = ~((~c0 & ~c1 & ~c2 & ~c3) | (~c0 & ~c1 & c2 & ~c3) | (c0 & ~c1 & c2 & ~c3) | (~c0 & c1 & c2 & ~c3) | (~c0 & ~c1 & ~c2 & c3) | (c0 & ~c1 & ~c2 & c3) | (~c0 & c1 & ~c2 & c3) | (c0 & c1 & ~c2 & c3) | (~c0 & ~c1 & c2 & c3) | (~c0 & c1 & c2 & c3) | (c0 & c1 & c2 & c3));
+	assign result[6] = ~((~c0 & c1 & ~c2 & ~c3) | (c0 & c1 & ~c2 & ~c3) | (~c0 & ~c1 & c2 & ~c3) | (c0 & ~c1 & c2 & ~c3) | (~c0 & c1 & c2 & ~c3) | (~c0 & ~c1 & ~c2 & c3) | (c0 & ~c1 & ~c2 & c3) | (~c0 & c1 & ~c2 & c3) | (c0 & c1 & ~c2 & c3) | (c0 & ~c1 & c2 & c3) | (~c0 & c1 & c2 & c3) | (c0 & c1 & c2 & c3));
+endmodule

@@ -1,0 +1,1 @@
+Warning (10268): Verilog HDL information at project.v(346): always construct contains both blocking and non-blocking assignments File: C:/altera_lite/16.0/ece241/FINALLLLLLLLLLLLLLLLL/project.v Line: 346
